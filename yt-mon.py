@@ -2,6 +2,7 @@ import sys
 import requests
 from bs4 import BeautifulSoup
 import json
+import time
 
 
 def construct_playlist_rss_url(id: str) -> str:
@@ -52,6 +53,17 @@ def get_rss_url(id: str) -> str:
 
     return None
 
+def parse_rss_latest_time(url: str) -> time.struct_time:
+    response = requests.get(url)
+    response.raise_for_status()
+    latest_time = None
+    soup = BeautifulSoup(response.content, "xml")
+    for entry in soup.find_all('entry'):
+        entry_title = entry.find('title').get_text()
+        entry_time = time.strptime(entry.find('published').get_text(), '%Y-%m-%dT%H:%M:%S%z')
+        if not latest_time or time.mktime(latest_time) < time.mktime(entry_time):
+            latest_time = entry_time
+    return latest_time
 
 def main():
     if (len(sys.argv) < 2):
@@ -65,7 +77,13 @@ def main():
                 if (len(id)):
                     rss_url = get_rss_url(id)
                     print(f"    {id}: {rss_url}")
-    
+                    if (rss_url):
+                        latest_time = parse_rss_latest_time(rss_url)
+                        if (latest_time):
+                            print(f"        {time.strftime('%d.%m.%Y %H:%M:%S %z', latest_time)}")
+                        else:
+                            print('        <no data>')
+
 
 if __name__ == '__main__':
     main()
