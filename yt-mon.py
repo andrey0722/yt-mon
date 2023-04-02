@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import threading
 from typing import List, TypedDict
 import requests
 from bs4 import BeautifulSoup
@@ -18,11 +19,17 @@ class Entry(TypedDict):
     title: Title
     url: Url
 
+class Task(TypedDict):
+    id: Id
+    entry: Entry
+    thread: threading.Thread
+    event: threading.Event
+
 class Record(TypedDict):
     id: Id
     rss_url: Url
     last_time: Time
-    old_entries: List[Entry]
+    tasks: List[Task]
 
 
 def construct_playlist_rss_url(id: Id) -> Url:
@@ -110,6 +117,24 @@ def parse_rss_entries(rss_url: Url) -> List[Entry]:
     entries.sort(key=lambda entry: entry['time'])
     return entries
 
+def download_thread_func(task: Task):
+    cmd_argv = ['yt-dlp', '--live-from-start', task['entry']['url']]
+    # Retry until success
+    exit_code = 1
+    while exit_code:
+        # Run the process in a separate window
+        process = subprocess.Popen(cmd_argv, creationflags=subprocess.DETACHED_PROCESS)
+        while not task['event'].is_set():
+            # Wait for process stopped
+            try:
+                exit_code = process.wait(1)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+        else:
+            # Got event signal to stop
+            break
+
 def main():
     if len(sys.argv) < 2:
         raise RuntimeError('Need at leat 1 argument')
@@ -152,42 +177,58 @@ def main():
                 else:
                     print('    <no data>')
 
-                records.append({ 'id': id, 'rss_url': rss_url, 'last_time': last_time, 'old_entries': [] })
+                records.append({ 'id': id, 'rss_url': rss_url, 'last_time': last_time, 'tasks': [] })
 
     # Monitor records in the loop
     print('------------------------------------------')
-    while True:
-        # time.sleep(10)
-        print('=====================================================')
-        for record in records:
-            time.sleep(2)
-            print('.......................................................')
-            # Clear expired entries
-            last_time = record['last_time']
-            expire_time = get_expire_time(last_time)
-            record['old_entries'] = list(filter(lambda entry: entry['time'] > expire_time, record['old_entries']))
+    try:
+        while True:
+            time.sleep(1)
+            print('=====================================================')
+            for record in records:
+                # time.sleep(2)
+                print('.......................................................')
+                # Clear expired tasks
+                last_time = record['last_time']
+                expire_time = get_expire_time(last_time)
+                record['tasks'] = list(filter(lambda task: task['entry']['time'] > expire_time or task['thread'].is_alive(), record['tasks']))
 
-            # Get all current entries
-            new_entries = parse_rss_entries(record['rss_url'])
-            if not new_entries:
-                # No entries at all
-                continue
-
-            # Update last time
-            record['last_time'] = new_entries[-1]['time']
-            if last_time:
-                # Get only newer entries
-                new_entries = filter(lambda entry: entry['time'] > last_time, new_entries)
-
-            # Process all new entries
-            for entry in new_entries:
-                if entry in record['old_entries']:
-                    # Skip already processed entries
+                # Get all current entries
+                new_entries = parse_rss_entries(record['rss_url'])
+                if not new_entries:
+                    # No entries at all
                     continue
-                print(f"{format_time(entry['time'])} | {record['id']} | {entry['title']} | {entry['url']}")
-                record['old_entries'].append(entry)
-                subprocess.Popen(['yt-dlp', '--live-from-start', entry['url']], creationflags=subprocess.DETACHED_PROCESS)
-                time.sleep(10)
+
+                # Update last time
+                record['last_time'] = new_entries[-1]['time']
+                if last_time:
+                    # Get only newer entries
+                    new_entries = filter(lambda entry: entry['time'] > last_time, new_entries)
+
+                # Process all new entries
+                for entry in new_entries:
+                    for task in record['tasks']:
+                        if entry['url'] == task['entry']['url']:
+                            # Skip already processed entries
+                            break
+                    else:
+                        id = record['id']
+                        url = entry['url']
+                        print(f"{format_time(entry['time'])} | {id} | {entry['title']} | {url}")
+
+                        task: Task = { 'id': id, 'entry': entry, 'thread': None, 'event': threading.Event() }
+                        thread = threading.Thread(target=download_thread_func, args=(task,))
+                        task['thread'] = thread
+                        thread.start()
+                        record['tasks'].append(task)
+
+    except KeyboardInterrupt as e:
+        # Stop download tasks
+        for record in records:
+            for task in record['tasks']:
+                task['event'].set()
+                task['thread'].join()
+        print('Terminated by Ctrl-C')
 
 
 if __name__ == '__main__':
