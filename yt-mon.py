@@ -84,7 +84,7 @@ def parse_time(time_str: str) -> Time:
     return datetime.strptime(time_str, '%Y-%m-%dT%H:%M:%S%z')
 
 def format_time(t: Time) -> str:
-    return t.strftime('%d.%m.%Y %H:%M:%S')
+    return t.astimezone().strftime('%d.%m.%Y %H:%M:%S')
 
 def get_expire_time(t: Time) -> Time:
     return t - timedelta(days=2)
@@ -183,11 +183,8 @@ def main():
     print('------------------------------------------')
     try:
         while True:
-            time.sleep(1)
-            print('=====================================================')
+            time.sleep(60)
             for record in records:
-                # time.sleep(2)
-                print('.......................................................')
                 # Clear expired tasks
                 last_time = record['last_time']
                 expire_time = get_expire_time(last_time)
