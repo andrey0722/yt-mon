@@ -118,7 +118,7 @@ def parse_rss_entries(rss_url: Url) -> List[Entry]:
     return entries
 
 def download_thread_func(task: Task):
-    cmd_argv = ['yt-dlp', '--live-from-start', task['entry']['url']]
+    cmd_argv = ['yt-dlp', '--live-from-start', '--wait-for-video', '10-300', task['entry']['url']]
     # Retry until success
     exit_code = 1
     while exit_code:
